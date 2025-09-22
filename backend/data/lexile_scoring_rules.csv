@@ -1,0 +1,21 @@
+key,value,notes
+model,Rasch 1-PL (difficulty only),P(correct)=exp(theta-b)/(1+exp(theta-b))
+scale_units,Lexile (L),Store theta and b in Lexiles to align with reporting
+start_estimate_<=11,600,Default if no prior; can be overridden
+start_estimate_12_14,750,Default if no prior
+start_estimate_15_plus,900,Default if no prior
+prior,"Normal(mean=current_est, sd=150)",EAP stabilization for first ~5 items
+selection_target,nearest difficulty to current theta,Tie-break by max Fisher info P*(1-P)
+passage_reuse,max 2 items per passage; no immediate repeats,Enforce variety
+exposure_cap_weekly,0.12,Flag items above cap for rotation
+fallback_band,+/-100L then +/-200L then +/-300L,If exact band unavailable
+update_method,EAP (fallback MLE),"Update theta, recompute SE after each item"
+precision_stop,SE <= 70,Stop when standard error meets threshold (Lexiles)
+max_items,15,Stop after max items if precision not met
+min_items,12,Ensure minimum length before applying precision stop
+time_cap_sec,1320,~22 minutes overall cap
+report_ci,theta ± 1.96*SE,Round to nearest integer Lexile
+recommended_range,"[theta-100, theta+100]",Display as just-right reading range
+skill_notes_logic,tag-level performance & timing heuristics,"E.g., low inference near theta → inference coaching tip"
+blueprint_topics,"narrative, informational, science, social",Balance to avoid topic bias
+blueprint_skills,"main-idea, detail, inference, vocab, purpose, structure",Ensure coverage per attempt
