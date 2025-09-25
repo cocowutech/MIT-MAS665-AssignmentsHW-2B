@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { BookOpen, Mic, PenTool, CheckCircle, Users, BarChart3 } from 'lucide-react';
+import { BookOpen, CheckCircle, Users, BarChart3 } from 'lucide-react';
 
 const Home = () => {
   const { isAuthenticated } = useAuth();
@@ -10,44 +10,28 @@ const Home = () => {
     {
       icon: <BookOpen size={32} />,
       title: 'Adaptive Reading Assessment',
-      description: 'AI-powered reading comprehension tests that adapt to your level in real-time'
+      description: 'AI-powered comprehension questions that adjust in real time to give you a precise CEFR placement.'
     },
     {
-      icon: <Mic size={32} />,
-      title: 'Speaking Assessment',
-      description: 'Record your responses and get instant AI feedback on pronunciation and fluency'
+      icon: <BarChart3 size={32} />,
+      title: 'Lexile-Calibrated Bank',
+      description: 'Curated passages across A2–C2 ensure confident Lexile estimates you can plan around.'
     },
     {
-      icon: <PenTool size={32} />,
-      title: 'Writing Assessment',
-      description: 'Submit written responses or upload images for comprehensive writing evaluation'
+      icon: <Users size={32} />,
+      title: 'Guidance from Coco',
+      description: "Direct placement into Coco's THINK reading classes plus personalized follow-up support."
     }
   ];
 
   const assessmentTypes = [
     {
       type: 'reading',
-      title: 'Reading Assessment',
-      description: 'Test your reading comprehension with adaptive questions',
+      title: 'Reading Placement',
+      description: 'A focused diagnostic that benchmarks your reading skills for Vico Education.',
       icon: <BookOpen size={24} />,
       duration: '15-20 minutes',
-      features: ['Adaptive difficulty', 'CEFR alignment', 'Instant feedback']
-    },
-    {
-      type: 'speaking',
-      title: 'Speaking Assessment',
-      description: 'Record your responses and get AI-powered evaluation',
-      icon: <Mic size={24} />,
-      duration: '10-15 minutes',
-      features: ['Audio recording', 'AI scoring', 'Fluency analysis']
-    },
-    {
-      type: 'writing',
-      title: 'Writing Assessment',
-      description: 'Submit written work for comprehensive evaluation',
-      icon: <PenTool size={24} />,
-      duration: '15-20 minutes',
-      features: ['Text or image input', 'AI feedback', 'Grammar analysis']
+      features: ['Adaptive difficulty', 'CEFR alignment', 'Lexile estimate + recommendations']
     }
   ];
 
@@ -56,10 +40,9 @@ const Home = () => {
       {/* Hero Section */}
       <section className="hero">
         <div className="container">
-          <h1>Adaptive English Placement Assessment</h1>
+          <h1>Vico Education Reading Placement</h1>
           <p>
-            AI-powered placement test that adapts to your level in real-time. 
-            Get accurate CEFR scores and personalized learning recommendations.
+            A single, focused reading assessment that adapts to your level and powers Coco's personalized guidance.
           </p>
           <div className="hero-actions">
             {isAuthenticated ? (
@@ -84,10 +67,10 @@ const Home = () => {
       <section className="features">
         <div className="container">
           <h2 style={{ textAlign: 'center', marginBottom: '1rem' }}>
-            Comprehensive Assessment Suite
+            Why learners choose Vico's reading placement
           </h2>
           <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '2rem' }}>
-            Our AI-powered system provides accurate, adaptive assessments across all language skills
+            Built for Vico Education families who want a clear reading benchmark and next-step guidance from Coco.
           </p>
           
           <div className="features-grid">
@@ -108,10 +91,10 @@ const Home = () => {
       <section className="assessment-types">
         <div className="container">
           <h2 style={{ textAlign: 'center', marginBottom: '1rem' }}>
-            Choose Your Assessment
+            Start your reading placement
           </h2>
           <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '2rem' }}>
-            Select the type of assessment you'd like to take
+            A single adaptive route designed to uncover your current reading level and recommended Vico class.
           </p>
           
           <div className="assessment-grid">
@@ -186,7 +169,7 @@ const Home = () => {
         <div className="container">
           <h2 style={{ marginBottom: '1rem' }}>Ready to Get Started?</h2>
           <p style={{ marginBottom: '2rem', opacity: 0.9 }}>
-            Take your first assessment and discover your English proficiency level
+            Take your reading placement and discover your current Vico classroom fit
           </p>
           {isAuthenticated ? (
             <Link to="/dashboard" className="btn" style={{ 

@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAssessment } from '../contexts/AssessmentContext';
 import { ArrowLeft, ArrowRight, Clock } from 'lucide-react';
-import AudioRecorder from '../components/AudioRecorder';
-import WritingAssessment from '../components/WritingAssessment';
 
 const Assessment = () => {
   const { type } = useParams();
@@ -12,22 +10,20 @@ const Assessment = () => {
     currentAssessment, 
     currentQuestion, 
     startAssessment, 
-    submitResponse, 
-    uploadAudioResponse,
+    submitResponse,
+    submitAssessment,
     loading 
   } = useAssessment();
 
   const [selectedOption, setSelectedOption] = useState('');
-  const [textResponse, setTextResponse] = useState('');
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
   const [responseTime, setResponseTime] = useState(0);
-  // const [startTime, setStartTime] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(120); // 2 minutes per question
   const [questionStartTime, setQuestionStartTime] = useState(null);
 
-  const fileInputRef = useRef(null);
+  useEffect(() => {
+    setSelectedOption('');
+  }, [currentQuestion?.id]);
 
   const handleSubmit = useCallback(async () => {
     if (isSubmitting || !currentQuestion) return;
@@ -37,26 +33,16 @@ const Assessment = () => {
         question_id: currentQuestion.id,
         response_time: responseTime
       };
-      if (currentQuestion.question_type === 'multiple_choice') {
-        if (!selectedOption) {
-          responseData.response_text = currentQuestion.options[0];
-        } else {
-          responseData.response_text = selectedOption;
-        }
-      } else if (currentQuestion.question_type === 'writing') {
-        responseData.response_text = textResponse || "No response provided";
-      } else if (currentQuestion.question_type === 'speaking') {
-        responseData.response_text = textResponse || "No response provided";
-        responseData.response_audio_url = "placeholder_audio_url.webm";
+      if (!selectedOption) {
+        responseData.response_text = currentQuestion.options?.[0];
+      } else {
+        responseData.response_text = selectedOption;
       }
       const result = await submitResponse(currentQuestion.id, responseData);
       if (result.completed) {
         navigate(`/results/${currentAssessment.id}`);
       } else {
         setSelectedOption('');
-        setTextResponse('');
-        setImageFile(null);
-        setImagePreview(null);
         setTimeRemaining(120);
         setQuestionStartTime(Date.now());
       }
@@ -66,11 +52,31 @@ const Assessment = () => {
     } finally {
       setIsSubmitting(false);
     }
-  }, [isSubmitting, currentQuestion, responseTime, selectedOption, textResponse, submitResponse, navigate, currentAssessment]);
+  }, [isSubmitting, currentQuestion, responseTime, selectedOption, submitResponse, navigate, currentAssessment]);
+
+  const handleFinalSubmit = useCallback(async () => {
+    if (!currentAssessment) return;
+    setIsSubmitting(true);
+    try {
+      const res = await submitAssessment(currentAssessment.id);
+      if (res.success) {
+        navigate(`/results/${currentAssessment.id}`);
+      }
+    } catch (e) {
+      console.error('Error submitting assessment:', e);
+      alert('Failed to submit assessment.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [currentAssessment, submitAssessment, navigate]);
 
   useEffect(() => {
+    if (type !== 'reading') {
+      navigate('/assessment/reading', { replace: true });
+      return;
+    }
     if (!currentAssessment) {
-      startAssessment(type);
+      startAssessment('reading');
     }
     if (currentQuestion) {
       // setStartTime(Date.now());
@@ -78,7 +84,7 @@ const Assessment = () => {
       setTimeRemaining(120); // Reset to 2 minutes per question
       setQuestionStartTime(Date.now());
     }
-  }, [currentAssessment, currentQuestion, type, startAssessment]);
+  }, [currentAssessment, currentQuestion, type, startAssessment, navigate]);
 
   useEffect(() => {
     let interval;
@@ -99,51 +105,6 @@ const Assessment = () => {
 
   const handleOptionSelect = (option) => {
     setSelectedOption(option);
-  };
-
-  const handleTextChange = (e) => {
-    setTextResponse(e.target.value);
-  };
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImageFile(file);
-      const reader = new FileReader();
-      reader.onload = (e) => setImagePreview(e.target.result);
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleImageRemove = () => {
-    setImageFile(null);
-    setImagePreview(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  
-
-
-  const handleAudioSubmit = async (audioBlob) => {
-    if (!currentQuestion) return;
-
-    setIsSubmitting(true);
-    const result = await uploadAudioResponse(currentQuestion.id, audioBlob);
-    
-      if (result?.success) {
-      if (result.completed) {
-        navigate(`/results/${currentAssessment.id}`);
-      } else {
-        // Reset form for next question
-        setResponseTime(0);
-        setTimeRemaining(120);
-        setQuestionStartTime(Date.now());
-      }
-    }
-
-    setIsSubmitting(false);
   };
 
   if (loading) {
@@ -184,7 +145,7 @@ const Assessment = () => {
           </button>
           
           <div className="assessment-info">
-            <h1>{type.charAt(0).toUpperCase() + type.slice(1)} Assessment</h1>
+            <h1>Reading Placement</h1>
             <div className="progress-info">
               <span>Question {currentAssessment.progress?.current || 1} of {currentAssessment.progress?.total || 15}</span>
               <div className="progress-bar">
@@ -215,7 +176,7 @@ const Assessment = () => {
             </div>
 
             {/* Reading Assessment - Multiple Choice */}
-            {type === 'reading' && currentQuestion.options && (
+            {currentQuestion.options && (
               <div className="question-options">
                 {currentQuestion.options.map((option, index) => (
                   <label 
@@ -235,47 +196,30 @@ const Assessment = () => {
               </div>
             )}
 
-            {/* Speaking Assessment */}
-            {type === 'speaking' && (
-              <div className="speaking-assessment">
-                <div className="speaking-prompt">
-                  <h3>Speaking Prompt</h3>
-                  <p>You have 30 seconds to prepare and 60 seconds to record your response.</p>
-                </div>
-                <AudioRecorder 
-                  onRecordingComplete={handleAudioSubmit}
-                  disabled={isSubmitting}
-                />
-              </div>
-            )}
-
-            {/* Writing Assessment */}
-            {type === 'writing' && (
-              <WritingAssessment
-                textResponse={textResponse}
-                onTextChange={handleTextChange}
-                imageFile={imageFile}
-                imagePreview={imagePreview}
-                onImageUpload={handleImageUpload}
-                onImageRemove={handleImageRemove}
-                fileInputRef={fileInputRef}
-              />
-            )}
           </div>
 
-          {/* Submit Button */}
-          {type !== 'speaking' && (
-            <div className="question-actions">
+          {/* Submit Button or Final Submit */}
+          <div className="question-actions">
+            {currentAssessment.progress?.current >= (currentAssessment.progress?.total || 15) ? (
+              <button
+                onClick={handleFinalSubmit}
+                disabled={isSubmitting}
+                className="btn btn-primary"
+              >
+                {isSubmitting ? 'Submitting...' : 'Submit Test'}
+                <ArrowRight size={16} />
+              </button>
+            ) : (
               <button
                 onClick={handleSubmit}
-                disabled={isSubmitting || (type === 'reading' && !selectedOption) || (type === 'writing' && !textResponse.trim())}
+                disabled={isSubmitting || !selectedOption}
                 className="btn btn-primary"
               >
                 {isSubmitting ? 'Submitting...' : 'Submit Answer'}
                 <ArrowRight size={16} />
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Response Time */}
           <div className="response-time">
@@ -410,25 +354,6 @@ const Assessment = () => {
           margin-right: 0.75rem;
         }
 
-        .speaking-assessment {
-          padding: 2rem;
-          background: #f8fafc;
-          border-radius: 0.75rem;
-          text-align: center;
-        }
-
-        .speaking-prompt h3 {
-          font-size: 1.25rem;
-          font-weight: 600;
-          color: #1e293b;
-          margin-bottom: 0.75rem;
-        }
-
-        .speaking-prompt p {
-          color: #64748b;
-          margin-bottom: 2rem;
-        }
-
         .question-actions {
           display: flex;
           justify-content: center;
@@ -478,10 +403,6 @@ const Assessment = () => {
           }
 
           .question-content {
-            padding: 1.5rem;
-          }
-
-          .speaking-assessment {
             padding: 1.5rem;
           }
         }

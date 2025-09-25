@@ -2,12 +2,15 @@ from sqlalchemy import create_engine, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Database URL
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./assessment.db")
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_SQLITE_PATH = BASE_DIR / "assessment.db"
+DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{DEFAULT_SQLITE_PATH}"
 
 # Create engine
 engine = create_engine(DATABASE_URL)

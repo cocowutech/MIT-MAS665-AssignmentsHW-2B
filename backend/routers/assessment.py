@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any
 import os
 import uuid
 from datetime import datetime
+import hashlib
 
 router = APIRouter()
 adaptive_engine = AdaptiveEngine()
@@ -42,6 +43,24 @@ class AssessmentResult(BaseModel):
     lexile_ci_high: int | None = None
     recommended_range_low: int | None = None
     recommended_range_high: int | None = None
+    breakdown_by_tier: Dict[str, Any] | None = None
+    missed_items: List[Dict[str, Any]] | None = None
+    question_history: List[Dict[str, Any]] | None = None
+    questions_answered: int | None = None
+    questions_correct: int | None = None
+
+def _content_hash_for(q: Question) -> str:
+    """Stable SHA-1 of lowercase(passage + stem + sorted(options))."""
+    passage = (q.passage or "").strip().lower()
+    stem = (q.content or "").strip().lower()
+    options = q.options or []
+    try:
+        opts = [str(o).strip().lower() for o in options]
+        opts.sort()
+    except Exception:
+        opts = []
+    blob = passage + "\n" + stem + "\n" + "||".join(opts)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 @router.post("/start")
 async def start_assessment(
@@ -125,7 +144,10 @@ async def get_next_question(
             "is_correct": r.is_correct,
             "response_time": r.response_time,
             "question_difficulty": r.question.difficulty_logit,
-            "question_lexile": r.question.lexile_level
+            "question_lexile": r.question.lexile_level,
+            "question_cefr": (r.question.cefr_level or None),
+            "question_topics": (r.question.topic_tags or []),
+            "question_hash": _content_hash_for(r.question) if r.question else None,
         }
         for r in responses
     ]
@@ -227,10 +249,25 @@ async def submit_response(
             "is_correct": r.is_correct,
             "response_time": r.response_time,
             "question_difficulty": r.question.difficulty_logit,
-            "question_lexile": r.question.lexile_level
+            "question_lexile": r.question.lexile_level,
+            "question_cefr": (r.question.cefr_level or None),
+            "question_topics": (r.question.topic_tags or []),
+            "question_hash": _content_hash_for(r.question) if r.question else None,
         }
         for r in responses
     ]
+
+    # If we have reached the total number of questions, complete immediately
+    if len(response_history) >= (assessment.total_questions or 15):
+        result = await complete_assessment(assessment_id, current_user, db)
+        return {
+            "response_id": response.id,
+            "is_correct": score_result["is_correct"],
+            "feedback": score_result.get("feedback", ""),
+            "next_question_available": False,
+            "completed": True,
+            "result": result
+        }
 
     if adaptive_engine.should_stop(response_history, assessment):
         result = await complete_assessment(assessment_id, current_user, db)
@@ -424,20 +461,75 @@ async def complete_assessment(
     if not assessment:
         raise HTTPException(status_code=404, detail="Assessment not found")
     
-    # Get all responses
-    responses = db.query(Response).filter(Response.assessment_id == assessment_id).all()
-    response_data = [
-        {
+    # Get all responses in order to preserve question sequence for reporting
+    responses = (
+        db.query(Response)
+        .filter(Response.assessment_id == assessment_id)
+        .order_by(Response.created_at)
+        .all()
+    )
+
+    response_data: List[Dict[str, Any]] = []
+    question_history: List[Dict[str, Any]] = []
+    for idx, r in enumerate(responses, start=1):
+        question = r.question
+        response_entry = {
             "question_id": r.question_id,
             "is_correct": r.is_correct,
             "response_time": r.response_time,
-            "ai_scores": {}  # Will be populated from AI scoring
+            "question_difficulty": question.difficulty_logit if question else None,
+            "question_lexile": question.lexile_level if question else None,
+            "question_cefr": (question.cefr_level or None) if question else None,
+            "question_topics": question.topic_tags if question else None,
+            "question_hash": _content_hash_for(question) if question else None,
         }
-        for r in responses
-    ]
-    
+        response_data.append(response_entry)
+
+        question_history.append({
+            "sequence": idx,
+            "question_id": r.question_id,
+            "assessment_id": assessment_id,
+            "content": question.content if question else None,
+            "passage": question.passage if question else None,
+            "options": question.options if question else None,
+            "correct_answer": question.correct_answer if question else None,
+            "explanation": question.explanation if question else None,
+            "user_response": r.response_text,
+            "is_correct": r.is_correct,
+            "response_time": r.response_time,
+            "cefr_level": (question.cefr_level or "").upper() if question else None,
+            "lexile_level": question.lexile_level if question else None,
+        })
+
     # Calculate final scores
     final_scores = adaptive_engine.calculate_final_scores(response_data)
+    total_answered = len(response_data)
+    correct_count = sum(1 for item in question_history if item.get("is_correct"))
+
+    # Build breakdown by tier (CEFR) and collect missed items
+    tier_keys = ["A1", "A2", "B1", "B2", "C1", "C2"]
+    breakdown = {k: {"correct": 0, "total": 0} for k in tier_keys}
+    missed: List[Dict[str, Any]] = []
+    for item in question_history:
+        tier = item.get("cefr_level") or ""
+        if tier in breakdown:
+            breakdown[tier]["total"] += 1
+            if item["is_correct"]:
+                breakdown[tier]["correct"] += 1
+            else:
+                missed.append({
+                    "item_id": item["question_id"],
+                    "tier": tier,
+                    "question": item["content"],
+                    "passage": (item.get("passage") or "")[:500] if item.get("passage") else None,
+                    "options": item.get("options"),
+                    "correct_answer": item.get("correct_answer"),
+                    "rationale": item.get("explanation"),
+                })
+
+    for tier_stats in breakdown.values():
+        total = tier_stats["total"]
+        tier_stats["accuracy"] = (tier_stats["correct"] / total) if total else None
     
     # Calculate sub-scores
     sub_scores = scoring_service.calculate_sub_scores(response_data, assessment.assessment_type)
@@ -485,6 +577,11 @@ async def complete_assessment(
         lexile_ci_high=final_scores.get("lexile_ci_high"),
         recommended_range_low=final_scores.get("recommended_range_low"),
         recommended_range_high=final_scores.get("recommended_range_high"),
+        breakdown_by_tier=breakdown,
+        missed_items=missed,
+        question_history=question_history,
+        questions_answered=total_answered,
+        questions_correct=correct_count,
     )
 
     return assessment_result.model_dump()
@@ -510,25 +607,67 @@ async def get_assessment_result(
     
     # Get sub-scores
     sub_scores = db.query(SubScore).filter(SubScore.assessment_id == assessment_id).all()
-    # Reconstruct response history to compute lexile estimate and CI for the report
-    responses = db.query(Response).filter(Response.assessment_id == assessment_id).order_by(Response.created_at).all()
-    response_data = [
-        {
+
+    # Reconstruct response history to compute lexile estimate and build review data
+    responses = (
+        db.query(Response)
+        .filter(Response.assessment_id == assessment_id)
+        .order_by(Response.created_at)
+        .all()
+    )
+
+    response_data: List[Dict[str, Any]] = []
+    question_history: List[Dict[str, Any]] = []
+    for idx, r in enumerate(responses, start=1):
+        question = r.question
+        entry = {
             "question_id": r.question_id,
             "is_correct": r.is_correct,
             "response_time": r.response_time,
-            "question_difficulty": r.question.difficulty_logit if r.question else None,
-            "question_lexile": r.question.lexile_level if r.question else None,
+            "question_difficulty": question.difficulty_logit if question else None,
+            "question_lexile": question.lexile_level if question else None,
+            "question_cefr": (question.cefr_level or None) if question else None,
+            "question_topics": question.topic_tags if question else None,
+            "question_hash": _content_hash_for(question) if question else None,
         }
-        for r in responses
-    ]
-    final_scores = adaptive_engine.calculate_final_scores(response_data) if responses else {
+        response_data.append(entry)
+
+        question_history.append({
+            "sequence": idx,
+            "question_id": r.question_id,
+            "assessment_id": assessment_id,
+            "content": question.content if question else None,
+            "passage": question.passage if question else None,
+            "options": question.options if question else None,
+            "correct_answer": question.correct_answer if question else None,
+            "explanation": question.explanation if question else None,
+            "user_response": r.response_text,
+            "is_correct": r.is_correct,
+            "response_time": r.response_time,
+            "cefr_level": (question.cefr_level or "").upper() if question else None,
+            "lexile_level": question.lexile_level if question else None,
+        })
+
+    final_scores = adaptive_engine.calculate_final_scores(response_data) if response_data else {
         "lexile_estimate": None,
         "lexile_ci_low": None,
         "lexile_ci_high": None,
         "recommended_range_low": None,
         "recommended_range_high": None,
     }
+
+    tier_keys = ["A1", "A2", "B1", "B2", "C1", "C2"]
+    breakdown = {k: {"correct": 0, "total": 0} for k in tier_keys}
+    correct_count = sum(1 for item in question_history if item.get("is_correct"))
+    for item in question_history:
+        tier = item.get("cefr_level") or ""
+        if tier in breakdown:
+            breakdown[tier]["total"] += 1
+            if item["is_correct"]:
+                breakdown[tier]["correct"] += 1
+    for stats in breakdown.values():
+        total = stats["total"]
+        stats["accuracy"] = (stats["correct"] / total) if total else None
     sub_score_data = [
         {
             "skill": s.skill,
@@ -540,6 +679,20 @@ async def get_assessment_result(
         for s in sub_scores
     ]
     
+    missed_items = [
+        {
+            "item_id": item["question_id"],
+            "tier": item.get("cefr_level"),
+            "question": item.get("content"),
+            "passage": (item.get("passage") or "")[:500] if item.get("passage") else None,
+            "options": item.get("options"),
+            "correct_answer": item.get("correct_answer"),
+            "rationale": item.get("explanation"),
+        }
+        for item in question_history
+        if not item["is_correct"]
+    ]
+
     return {
         "assessment_id": assessment_id,
         "cefr_level": assessment.cefr_level,
@@ -556,7 +709,36 @@ async def get_assessment_result(
         "lexile_ci_high": final_scores.get("lexile_ci_high"),
         "recommended_range_low": final_scores.get("recommended_range_low"),
         "recommended_range_high": final_scores.get("recommended_range_high"),
+        "breakdown_by_tier": breakdown,
+        "missed_items": missed_items,
+        "question_history": question_history,
+        "questions_answered": len(question_history),
+        "questions_correct": correct_count,
     }
+
+@router.post("/{assessment_id}/submit")
+async def submit_assessment(
+    assessment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Explicitly submit an in-progress assessment and compute final results."""
+    # Validate assessment
+    assessment = db.query(Assessment).filter(
+        Assessment.id == assessment_id,
+        Assessment.user_id == current_user.id
+    ).first()
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    if assessment.status == "completed":
+        # Return existing result
+        result = await get_assessment_result(assessment_id, current_user, db)
+        return result
+
+    # Complete now
+    result = await complete_assessment(assessment_id, current_user, db)
+    return result
 
 @router.get("/user/{user_id}/assessments")
 async def get_user_assessments(

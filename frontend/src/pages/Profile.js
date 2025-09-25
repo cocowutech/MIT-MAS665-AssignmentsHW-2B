@@ -1,12 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAssessment } from '../contexts/AssessmentContext';
-import { User, Mail, Calendar, Edit, Save, X } from 'lucide-react';
+import { User, Mail, Calendar, Edit, Save, X, PartyPopper } from 'lucide-react';
 
 const Profile = () => {
   const { user, login } = useAuth();
-  const { getUserAssessments } = useAssessment();
+  const { getUserAssessments, getAssessmentResult } = useAssessment();
   const [assessments, setAssessments] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({
@@ -15,6 +14,8 @@ const Profile = () => {
     age: user?.age || ''
   });
   const [loading, setLoading] = useState(true);
+  const [bestPlacementDetail, setBestPlacementDetail] = useState(null);
+  const [bestPlacementDuration, setBestPlacementDuration] = useState(null);
 
   useEffect(() => {
     const loadAssessments = async () => {
@@ -79,26 +80,170 @@ const Profile = () => {
       .cefr_level;
   };
 
-  const getAssessmentStats = () => {
-    const total = assessments.length;
-    const completed = assessments.filter(a => a.status === 'completed').length;
-    const inProgress = assessments.filter(a => a.status === 'in_progress').length;
-    
+  const readingAssessments = useMemo(
+    () => assessments.filter((a) => a.assessment_type === 'reading'),
+    [assessments]
+  );
+
+  const stats = useMemo(() => {
+    const total = readingAssessments.length;
+    const completed = readingAssessments.filter((a) => a.status === 'completed').length;
+    const inProgress = readingAssessments.filter((a) => a.status === 'in_progress').length;
     return { total, completed, inProgress };
+  }, [readingAssessments]);
+
+  const sanitizeLexile = (value) => {
+    if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) {
+      return null;
+    }
+    const rounded = Math.round(value);
+    const lowerBound = 200;
+    const upperBound = 1350;
+    if (rounded < lowerBound) {
+      return lowerBound;
+    }
+    if (rounded > upperBound) {
+      return upperBound;
+    }
+    return rounded;
   };
 
-  const stats = getAssessmentStats();
+  const deriveLexile = (assessment) => {
+    if (typeof assessment?.lexile_estimate === 'number') {
+      return sanitizeLexile(assessment.lexile_estimate);
+    }
+    if (typeof assessment?.theta_score === 'number') {
+      const theta = Math.max(-4, Math.min(4, assessment.theta_score));
+      return sanitizeLexile(800 + theta * 250);
+    }
+    return null;
+  };
 
-  const chartData = assessments
-    .filter(a => a.status === 'completed')
-    .sort((a,b) => new Date(a.completed_at || a.started_at) - new Date(b.completed_at || b.started_at))
-    .map((a, idx) => {
-      const numericLexile = (typeof a.lexile_estimate === 'number')
-        ? a.lexile_estimate
-        : (typeof a.theta_score === 'number' ? Math.round(800 + (a.theta_score * 250)) : null);
-      return { testIndex: idx + 1, lexile: typeof numericLexile === 'number' ? numericLexile : null };
-    })
-    .filter(d => typeof d.lexile === 'number');
+  const completedPlacements = useMemo(
+    () => readingAssessments.filter((a) => a.status === 'completed'),
+    [readingAssessments]
+  );
+
+  const bestPlacement = useMemo(() => {
+    if (!completedPlacements.length) return null;
+    return completedPlacements.reduce((best, current) => {
+      const lexile = deriveLexile(current);
+      if (typeof lexile !== 'number') {
+        return best;
+      }
+      if (!best || lexile > best.lexile) {
+        return {
+          ...current,
+          lexile
+        };
+      }
+      return best;
+    }, null);
+  }, [completedPlacements]);
+
+  const latestPlacement = useMemo(() => {
+    if (!completedPlacements.length) return null;
+    return [...completedPlacements]
+      .sort((a, b) => new Date(b.completed_at || b.started_at) - new Date(a.completed_at || a.started_at))
+      .map((placement) => ({
+        ...placement,
+        lexile: deriveLexile(placement)
+      }))[0];
+  }, [completedPlacements]);
+
+  const recommendedRange = useMemo(() => {
+    if (!latestPlacement?.lexile) {
+      return 'your recommended level';
+    }
+    const low = Math.max(300, latestPlacement.lexile - 100);
+    const high = Math.min(1350, latestPlacement.lexile + 100);
+    return `${low}–${high}L`;
+  }, [latestPlacement]);
+
+  const durationFromTimestamps = (start, end) => {
+    if (!start || !end) return null;
+    const startTime = new Date(start).getTime();
+    const endTime = new Date(end).getTime();
+    if (Number.isNaN(startTime) || Number.isNaN(endTime) || endTime <= startTime) return null;
+    return Math.max(0, Math.round((endTime - startTime) / 1000));
+  };
+
+  const formatDuration = (totalSeconds) => {
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+      return 'N/A';
+    }
+
+    if (totalSeconds < 60) {
+      return `${totalSeconds}s`;
+    }
+
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const segments = [];
+    if (hours) {
+      segments.push(`${hours}h`);
+    }
+    segments.push(`${minutes}m`);
+    if (seconds && !hours) {
+      segments.push(`${seconds}s`);
+    }
+
+    return segments.join(' ');
+  };
+
+  const fallbackDurationSeconds = useMemo(() => {
+    if (!bestPlacement?.started_at || !bestPlacement?.completed_at) {
+      return null;
+    }
+    return durationFromTimestamps(bestPlacement.started_at, bestPlacement.completed_at);
+  }, [bestPlacement]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadBestPlacementDetail = async () => {
+      if (!bestPlacement?.id) {
+        setBestPlacementDetail(null);
+        setBestPlacementDuration(null);
+        return;
+      }
+
+      const result = await getAssessmentResult(bestPlacement.id);
+      if (isCancelled) return;
+
+      if (result.success) {
+        setBestPlacementDetail(result.data);
+        const questionHistory = Array.isArray(result.data?.question_history)
+          ? result.data.question_history
+          : [];
+        const summedSeconds = questionHistory.reduce((total, item) => {
+          const value = Number(item?.response_time);
+          if (Number.isFinite(value) && value > 0) {
+            return total + value;
+          }
+          return total;
+        }, 0);
+        if (summedSeconds > 0) {
+          setBestPlacementDuration(Math.round(summedSeconds));
+        } else {
+          setBestPlacementDuration(null);
+        }
+      } else {
+        setBestPlacementDetail(null);
+        setBestPlacementDuration(null);
+      }
+    };
+
+    loadBestPlacementDetail();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [bestPlacement, getAssessmentResult]);
+
+  const displayedDurationSeconds = bestPlacementDuration ?? fallbackDurationSeconds;
 
   if (loading) {
     return (
@@ -240,31 +385,41 @@ const Profile = () => {
           </div>
         </div>
 
-        {/* Progress Chart */}
-        {chartData.length > 0 && (
-          <div className="stats-section" style={{ marginTop: '1rem' }}>
-            <h2>Reading Progress (Lexile)</h2>
-            <div style={{ width: '100%', height: 260 }}>
-              <ResponsiveContainer>
-                <LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" dataKey="testIndex" domain={[1, chartData.length || 1]} allowDecimals={false} tickFormatter={(v) => `Test ${v}`} />
-                  <YAxis type="number" domain={[300, 1350]} ticks={[300,500,700,900,1100,1300]} allowDecimals={false} tickFormatter={(v) => `${v}`} />
-                  <Tooltip formatter={(v) => `${Math.round(Number(v))}L`} />
-                  <Line type="monotone" dataKey="lexile" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
+        {/* Placement Highlight */}
+        <div className="stats-section" style={{ marginTop: '1rem' }}>
+          <h2>Placement Highlight</h2>
+          {bestPlacement ? (
+            <div className="placement-highlight">
+              <div className="placement-highlight__icon"><PartyPopper size={28} /></div>
+              <div className="placement-highlight__details">
+                <div className="placement-highlight__row">
+                  <span className="label">Best Lexile</span>
+                  <strong>{bestPlacement.lexile || 'N/A'}L</strong>
+                </div>
+                <div className="placement-highlight__row">
+                  <span className="label">CEFR Level</span>
+                  <strong>{bestPlacement.cefr_level || 'N/A'}</strong>
+                </div>
+                <div className="placement-highlight__row">
+                  <span className="label">Completed On</span>
+                  <strong>{formatDate(bestPlacement.completed_at || bestPlacement.started_at)}</strong>
+                </div>
+                <div className="placement-highlight__row">
+                  <span className="label">Time to Finish</span>
+                  <strong>{formatDuration(displayedDurationSeconds)}</strong>
+                </div>
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Recent Assessments removed per request */}
+          ) : (
+            <p style={{ color: '#64748b', margin: 0 }}>Complete your first placement to unlock detailed insights.</p>
+          )}
+        </div>
 
         {/* Smart Suggestions */}
         <div className="assessments-section" style={{ marginTop: '1rem' }}>
           <h2>Smart Suggestions</h2>
           <ul style={{ margin: 0, paddingLeft: '1.25rem', color: '#374151', lineHeight: 1.8 }}>
-            <li>Read at {chartData.length ? `${Math.max(300, chartData[chartData.length-1].lexile - 100)}–${Math.min(1350, (chartData[chartData.length-1].lexile || 800) + 100)}L` : 'your recommended level'} for 20–30 minutes daily.</li>
+            <li>Read at {recommendedRange} for 20–30 minutes daily.</li>
             <li>Practice main idea and inference with short informational texts; summarize in 1–2 sentences.</li>
             <li>Build vocabulary: create flashcards for 8–10 new words per session; review with spaced repetition.</li>
             <li>Target weak skills first (detail lookbacks, vocab-in-context). Time each item to improve pace.</li>
@@ -431,6 +586,52 @@ const Profile = () => {
           font-weight: 600;
           color: #1e293b;
           margin-bottom: 1.5rem;
+        }
+
+        .placement-highlight {
+          display: flex;
+          align-items: center;
+          gap: 1.5rem;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 1rem;
+          padding: 1.5rem;
+        }
+
+        .placement-highlight__icon {
+          width: 3rem;
+          height: 3rem;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(59, 130, 246, 0.12);
+          color: #1d4ed8;
+        }
+
+        .placement-highlight__details {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          gap: 1rem;
+          width: 100%;
+        }
+
+        .placement-highlight__row {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .placement-highlight__row .label {
+          text-transform: uppercase;
+          font-size: 0.75rem;
+          color: #64748b;
+          letter-spacing: 0.08em;
+        }
+
+        .placement-highlight__row strong {
+          font-size: 1.1rem;
+          color: #0f172a;
         }
 
         .assessments-list {

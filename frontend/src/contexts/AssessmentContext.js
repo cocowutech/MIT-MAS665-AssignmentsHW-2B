@@ -281,6 +281,20 @@ export const AssessmentProvider = ({ children }) => {
     }
   };
 
+  const submitAssessment = async (assessmentId) => {
+    try {
+      setLoading(true);
+      const response = await axios.post(`/api/assessment/${assessmentId}/submit`);
+      return { success: true, data: response.data };
+    } catch (error) {
+      const message = toErrorMessage(error, 'Failed to submit assessment');
+      toast.error(message);
+      return { success: false, error: message };
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const getUserAssessments = async (userId) => {
     try {
       const response = await axios.get(`/api/assessment/user/${userId}/assessments`);
@@ -308,6 +322,7 @@ export const AssessmentProvider = ({ children }) => {
     uploadAudioResponse,
     uploadWritingResponse,
     getAssessmentResult,
+    submitAssessment,
     getUserAssessments,
     resetAssessment
   };

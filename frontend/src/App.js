@@ -11,7 +11,6 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Assessment from './pages/Assessment';
 import Results from './pages/Results';
-import Admin from './pages/Admin';
 import Profile from './pages/Profile';
 import './App.css';
 
@@ -48,14 +47,6 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <Results />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="/admin" 
-                  element={
-                    <ProtectedRoute adminOnly>
-                      <Admin />
                     </ProtectedRoute>
                   } 
                 />

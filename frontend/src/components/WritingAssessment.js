@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, X, FileText } from 'lucide-react';
+import { Upload, X, FileText, Camera } from 'lucide-react';
 
 const WritingAssessment = ({ 
   textResponse, 

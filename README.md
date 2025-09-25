@@ -102,9 +102,9 @@ A comprehensive AI-powered adaptive English placement test designed for KET/PET/
    npm install
    ```
 
-3. **Start the development server**:
+3. **Start the development server (single command)**:
    ```bash
-   npm start
+   npm run dev
    ```
 
 4. **Open your browser**:
@@ -262,6 +262,20 @@ The application is fully responsive and optimized for mobile devices:
 - Detailed assessment reports
 - Cohort analysis
 - Custom date ranges
+
+## ▶️ Single Run Entrypoints
+
+Use exactly these two commands during development:
+
+```bash
+# Backend (FastAPI)
+cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# Frontend (React)
+cd frontend && npm run dev
+```
+
+The frontend proxies API to `http://localhost:8000` per `frontend/package.json` proxy setting.
 
 ## 🚀 Deployment
 

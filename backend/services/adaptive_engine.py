@@ -20,12 +20,32 @@ class AdaptiveEngine:
         return 1.0 / (1.0 + math.exp(-z))
 
     def select_next_question(self, db: Session, assessment_id: int, current_responses: List[Dict]) -> Optional[Question]:
-        """Select the next question based on current ability estimate"""
+        """Select the next question using CEFR tier routing with topic de-dup.
+
+        - Start tier defaults to B1 when no responses
+        - Route up if ≥2 of last 3 are correct; down if ≤1 (bounds A2..C1)
+        - Avoid reusing any question id (handled by caller via answered ids filter)
+        - Avoid immediate repeats from same topic within the last 2 items
+        - Prefer questions in the target tier; gracefully fallback to nearby tiers
+        """
         assessment = db.query(Assessment).filter(Assessment.id == assessment_id).first()
         if not assessment:
             return None
 
         answered_question_ids = [r.get('question_id') for r in current_responses]
+        answered_hashes = set([h for h in [r.get('question_hash') for r in current_responses] if h])
+
+        # Compute recent topics to avoid repeats (flatten any topic tag lists)
+        recent_two = current_responses[-2:] if len(current_responses) >= 2 else current_responses
+        recent_topics: set[str] = set()
+        for r in recent_two:
+            topics = r.get('question_topics') or []
+            try:
+                for t in topics:
+                    if isinstance(t, str) and t.strip():
+                        recent_topics.add(t.strip().lower())
+            except Exception:
+                continue
 
         available_query = db.query(Question).filter(
             Question.assessment_category == assessment.assessment_type
@@ -54,27 +74,136 @@ class AdaptiveEngine:
                 return False
 
         available_questions = [q for q in all_candidates if is_servable(q)]
+        # Global session-level content-hash de-dup across all candidates
+        if answered_hashes:
+            filtered: list[Question] = []
+            for q in available_questions:
+                try:
+                    passage = (q.passage or "").strip().lower()
+                    stem = (q.content or "").strip().lower()
+                    opts = q.options or []
+                    opts_norm = [str(o).strip().lower() for o in opts]
+                    opts_norm.sort()
+                    blob = passage + "\n" + stem + "\n" + "||".join(opts_norm)
+                    h = __import__('hashlib').sha1(blob.encode('utf-8')).hexdigest()
+                    if h in answered_hashes:
+                        continue
+                except Exception:
+                    pass
+                filtered.append(q)
+            available_questions = filtered
 
         if not available_questions:
             return None
 
-        target_difficulty = self._determine_target_difficulty(current_responses, available_questions)
+        # Determine target CEFR tier
+        tiers = ["A2", "B1", "B2", "C1"]
+        def cefr_from_resp(r: Dict) -> str:
+            lvl = r.get('question_cefr')
+            if lvl in tiers:
+                return lvl
+            # Fallback from lexile if provided
+            lex = r.get('question_lexile')
+            if isinstance(lex, (int, float)):
+                if lex < 500: return "A2"
+                if lex < 800: return "B1"
+                if lex < 1000: return "B2"
+                return "C1"
+            return "B1"
 
-        # Choose closest difficulty; tie-break by maximum information at current theta
+        if not current_responses:
+            current_tier = "B1"
+        else:
+            current_tier = cefr_from_resp(current_responses[-1])
+
+        window = current_responses[-3:] if len(current_responses) >= 3 else current_responses
+        correct_count = sum(1 for r in window if r.get('is_correct'))
+        idx = tiers.index(current_tier)
+        if correct_count >= 2:
+            idx = min(idx + 1, len(tiers) - 1)
+        elif correct_count <= 1:
+            idx = max(idx - 1, 0)
+        target_tier = tiers[idx]
+
+        # Build candidate pools: primary = target tier and topic-safe; then relax
+        def topic_safe(q: Question) -> bool:
+            try:
+                tags = q.topic_tags or []
+                for t in tags:
+                    if isinstance(t, str) and t.strip().lower() in recent_topics:
+                        return False
+            except Exception:
+                return True
+            return True
+
+        def candidates_for_tier(tier: str, enforce_topic: bool) -> list[Question]:
+            pool = [q for q in available_questions if (q.cefr_level or "").upper() == tier]
+            if enforce_topic:
+                pool = [q for q in pool if topic_safe(q)]
+            # Exclude any already answered ids as extra safety
+            if answered_question_ids:
+                pool = [q for q in pool if q.id not in answered_question_ids]
+            # Session-level content hash de-dup: remove any with same content hash
+            if answered_hashes:
+                deduped = []
+                for q in pool:
+                    try:
+                        passage = (q.passage or "").strip().lower()
+                        stem = (q.content or "").strip().lower()
+                        opts = q.options or []
+                        opts_norm = [str(o).strip().lower() for o in opts]
+                        opts_norm.sort()
+                        blob = passage + "\n" + stem + "\n" + "||".join(opts_norm)
+                        h = __import__('hashlib').sha1(blob.encode('utf-8')).hexdigest()
+                        if h in answered_hashes:
+                            continue
+                    except Exception:
+                        pass
+                    deduped.append(q)
+                pool = deduped
+            return pool
+
+        primary = candidates_for_tier(target_tier, enforce_topic=True)
+        if not primary:
+            primary = candidates_for_tier(target_tier, enforce_topic=False)
+        if not primary:
+            # Fallback to neighboring tiers
+            neighbor_indices = sorted(set([max(idx-1,0), min(idx+1, len(tiers)-1), 1, 2]))
+            pools: list[Question] = []
+            for ni in neighbor_indices:
+                pools = candidates_for_tier(tiers[ni], enforce_topic=True)
+                if pools:
+                    primary = pools
+                    break
+            if not primary:
+                for ni in neighbor_indices:
+                    pools = candidates_for_tier(tiers[ni], enforce_topic=False)
+                    if pools:
+                        primary = pools
+                        break
+
+        if not primary:
+            # If still nothing, return best by difficulty as before
+            target_difficulty = self._determine_target_difficulty(current_responses, available_questions)
+            def key_tuple(question: Question):
+                difficulty = question.difficulty_logit or 0.0
+                dist = abs(difficulty - target_difficulty)
+                z = (target_difficulty - difficulty)
+                p = self._sigmoid(z)
+                info = p * (1 - p)
+                return (dist, -info)
+            return min(available_questions, key=key_tuple)
+
+        # Within primary pool, pick by closeness of difficulty to target for stability
+        target_difficulty = self._determine_target_difficulty(current_responses, primary)
         def key_tuple(question: Question):
             difficulty = question.difficulty_logit or 0.0
-            # distance primary key (lower is better)
             dist = abs(difficulty - target_difficulty)
-            # information at current target
-            z = (target_difficulty - 0.0)  # with a=1, b≈0 in our simplified update
-            # better: compute at question difficulty by treating b ≈ question.difficulty
             z = (target_difficulty - difficulty)
             p = self._sigmoid(z)
-            info = p * (1 - p)  # max 0.25
-            # we want max info, so use negative for sorting (min selects highest)
+            info = p * (1 - p)
             return (dist, -info)
-
-        return min(available_questions, key=key_tuple)
+        return min(primary, key=key_tuple)
     
     def should_stop(self, responses: List[Dict], assessment: Assessment) -> bool:
         """Determine if assessment should stop"""

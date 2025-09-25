@@ -18,7 +18,7 @@ const Navbar = () => {
     <nav className="navbar">
       <div className="navbar-content">
         <Link to="/" className="navbar-brand">
-          English Assessment
+          Vico Education Reading Placement
         </Link>
 
         <div className="navbar-nav">

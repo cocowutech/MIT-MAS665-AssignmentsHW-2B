@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useAssessment } from '../contexts/AssessmentContext';
-import { BookOpen, Mic, PenTool, BarChart3, Clock, CheckCircle, TrendingUp } from 'lucide-react';
+import { BookOpen, BarChart3, Clock, CheckCircle, TrendingUp } from 'lucide-react';
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -24,29 +24,15 @@ const Dashboard = () => {
     loadAssessments();
   }, [user, getUserAssessments]);
 
+  const readingAssessments = assessments.filter(a => a.assessment_type === 'reading');
+
   const assessmentTypes = [
     {
       type: 'reading',
-      title: 'Reading Assessment',
-      description: 'Test your reading comprehension with adaptive questions',
+      title: 'Reading Placement',
+      description: "Benchmark your reading comprehension and receive Coco's guidance.",
       icon: <BookOpen size={24} />,
       color: '#3b82f6',
-      duration: '15-20 min'
-    },
-    {
-      type: 'speaking',
-      title: 'Speaking Assessment',
-      description: 'Record your responses and get AI-powered evaluation',
-      icon: <Mic size={24} />,
-      color: '#10b981',
-      duration: '10-15 min'
-    },
-    {
-      type: 'writing',
-      title: 'Writing Assessment',
-      description: 'Submit written work for comprehensive evaluation',
-      icon: <PenTool size={24} />,
-      color: '#8b5cf6',
       duration: '15-20 min'
     }
   ];
@@ -97,7 +83,7 @@ const Dashboard = () => {
         {/* Header */}
         <div className="dashboard-header">
           <h1>Welcome back, {user?.name}!</h1>
-          <p>Choose an assessment to test your English proficiency</p>
+          <p>Start or review your Vico Education reading placement.</p>
         </div>
 
         {/* Quick Stats */}
@@ -107,8 +93,8 @@ const Dashboard = () => {
               <BarChart3 size={24} />
             </div>
             <div className="stat-content">
-              <h3>{assessments.length}</h3>
-              <p>Total Assessments</p>
+              <h3>{readingAssessments.length}</h3>
+              <p>Total Placements</p>
             </div>
           </div>
           <div className="stat-card">
@@ -116,8 +102,8 @@ const Dashboard = () => {
               <CheckCircle size={24} />
             </div>
             <div className="stat-content">
-              <h3>{assessments.filter(a => a.status === 'completed').length}</h3>
-              <p>Completed</p>
+              <h3>{readingAssessments.filter(a => a.status === 'completed').length}</h3>
+              <p>Completed Placements</p>
             </div>
           </div>
           <div className="stat-card">
@@ -126,20 +112,20 @@ const Dashboard = () => {
             </div>
             <div className="stat-content">
               <h3>
-                {assessments.filter(a => a.status === 'completed' && a.cefr_level).length > 0 
-                  ? assessments.filter(a => a.status === 'completed' && a.cefr_level)
+                {readingAssessments.filter(a => a.status === 'completed' && a.cefr_level).length > 0 
+                  ? readingAssessments.filter(a => a.status === 'completed' && a.cefr_level)
                       .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at))[0]?.cefr_level
                   : 'N/A'
                 }
               </h3>
-              <p>Latest CEFR Level</p>
+              <p>Latest Reading CEFR</p>
             </div>
           </div>
         </div>
 
         {/* Assessment Types */}
         <div className="assessment-section">
-          <h2>Start New Assessment</h2>
+          <h2>Start New Reading Placement</h2>
           <div className="assessment-grid">
             {assessmentTypes.map((assessment, index) => (
               <div key={index} className="assessment-card">
@@ -161,7 +147,7 @@ const Dashboard = () => {
                     borderColor: assessment.color
                   }}
                 >
-                  Start Assessment
+                  Start Placement
                 </Link>
               </div>
             ))}
@@ -169,16 +155,19 @@ const Dashboard = () => {
         </div>
 
         {/* Recent Assessments */}
-        {assessments.length > 0 && (
+        {readingAssessments.length > 0 && (
           <div className="recent-assessments">
-            <h2>Recent Assessments</h2>
+            <h2>Recent Placements</h2>
             <div className="assessments-list">
-              {assessments.filter(a => a.status === 'completed').slice(0, 5).map((assessment) => (
+              {readingAssessments
+                .filter(a => a.status === 'completed')
+                .slice(0, 5)
+                .map((assessment) => (
                 <div key={assessment.id} className="assessment-item">
                   <div className="assessment-info">
                     <div className="assessment-type">
-                      {assessmentTypes.find(t => t.type === assessment.assessment_type)?.icon}
-                      <span>{assessment.assessment_type.charAt(0).toUpperCase() + assessment.assessment_type.slice(1)}</span>
+                      <BookOpen size={16} />
+                      <span>Reading</span>
                     </div>
                     <div className="assessment-status">
                       {getStatusIcon(assessment.status)}
@@ -212,13 +201,13 @@ const Dashboard = () => {
         )}
 
         {/* Empty State */}
-        {assessments.length === 0 && (
+        {readingAssessments.length === 0 && (
           <div className="empty-state">
             <div className="empty-icon">
               <BarChart3 size={48} />
             </div>
-            <h3>No assessments yet</h3>
-            <p>Start your first assessment to discover your English proficiency level</p>
+            <h3>No placements yet</h3>
+            <p>Start your first reading placement to discover your current level.</p>
             <div className="empty-actions">
               {assessmentTypes.map((assessment, index) => (
                 <Link 
